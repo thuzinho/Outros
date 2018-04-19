@@ -1,0 +1,74 @@
+/****** Object:  StoredProcedure [dbo].[sp_helprotect]    Script Date: 4/19/2018 11:14:24 AM ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+CREATE PROCEDURE [dbo].[sp_helprotect]
+	@name				ncharacter varying(776)  = NULL
+	,@username			sysname  = NULL
+	,@grantorname		sysname  = NULL
+	,@permissionarea	character varying(10)  = 'o s'
+AS
+
+	declare
+	@OwnerName				sysname
+	,@ObjectStatementName	sysname
+	,@schid			integer
+	,@grantor		integer
+	,@grantee		integer
+
+	/*  Derive OwnerName and @ObjectStatementName*/
+	select	@OwnerName				=	parsename(@name, 2)
+			,@ObjectStatementName	=	parsename(@name, 1)
+
+	IF (@ObjectStatementName is NULL and @name is not null)
+	begin
+		raiserror(15253,-1,-1,@name)
+		return (1)
+	end
+
+	if (@OwnerName is not null)
+	begin
+		select @schid = schema_id(@OwnerName)
+		-- assign void schema id if not valid
+		if (@schid is null)
+			select @schid = 0	
+	end
+
+	if (@username is not null)
+	begin
+		select @grantee = database_principal_id(@username)
+		if (@grantee is null)
+			select @grantee = -1	-- assign void user id
+	end
+
+	if (@grantorname is not null)
+	begin
+		select @grantor = database_principal_id(@grantorname)
+		if (@grantor is null)
+			select @grantor = -1	-- assign void user id
+	end
+
+	SELECT 
+		  [Owner] = SCHEMA_NAME(obj.schema_id)
+		, [Object] = obj.name
+		, Grantee = USER_NAME(sysp.grantee_principal_id)
+		, Grantor = USER_NAME(sysp.grantor_principal_id)
+		, ProtectType = CASE sysp.state collate catalog_default	WHEN 'G' THEN 'Grant' WHEN 'D' THEN 'Deny' WHEN 'W' THEN 'Grant_WGO' END
+		, [Action] = CASE sysp.type collate catalog_default WHEN 'SL' THEN 'Select' WHEN 'EX' THEN 'Excecute' END
+		, [Column] = '(All)'
+	FROM	
+		sys.database_permissions sysp
+		INNER JOIN sys.all_objects obj on obj.object_id = sysp.major_id
+	WHERE 
+			sysp.class = 1		
+		AND (@schid is null or obj.schema_id = @schid)
+		AND	(@ObjectStatementName is null or obj.name = @ObjectStatementName)
+		AND	(@grantee is null or sysp.grantee_principal_id =  @grantee)
+		AND	(@grantor is null or sysp.grantor_principal_id = @grantor)
+GO
+
+
